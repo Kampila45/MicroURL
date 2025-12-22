@@ -225,6 +225,11 @@ func (h *Handlers) OpenAPISpec(w http.ResponseWriter, r *http.Request) {
 												"example":     "http://localhost:8080/aBc123Xy",
 												"description": "Complete short URL",
 											},
+											"qr_code_url": map[string]interface{}{
+												"type":        "string",
+												"example":     "http://localhost:8080/api/qr/aBc123Xy",
+												"description": "URL to generate QR code for the short link",
+											},
 										},
 									},
 								},
@@ -235,6 +240,50 @@ func (h *Handlers) OpenAPISpec(w http.ResponseWriter, r *http.Request) {
 						},
 						"409": {
 							Description: "Slug collision",
+						},
+						"500": {
+							Description: "Internal server error",
+						},
+					},
+				},
+			},
+			"/api/qr/{slug}": {
+				"get": OpenAPIOperation{
+					Summary:     "Generate QR Code",
+					Description: "Generates a QR code image (PNG) for the short link associated with the given slug.",
+					Tags:        []string{"Links"},
+					Parameters: []OpenAPIParameter{
+						{
+							Name:        "slug",
+							In:          "path",
+							Required:    true,
+							Description: "The short link slug",
+							Schema: map[string]interface{}{
+								"type":    "string",
+								"example": "aBc123Xy",
+							},
+						},
+					},
+					Responses: map[string]OpenAPIResponse{
+						"200": {
+							Description: "QR code image (PNG)",
+							Content: map[string]OpenAPIContent{
+								"image/png": {
+									Schema: map[string]interface{}{
+										"type":   "string",
+										"format": "binary",
+									},
+								},
+							},
+						},
+						"400": {
+							Description: "Invalid slug format",
+						},
+						"404": {
+							Description: "Link not found",
+						},
+						"410": {
+							Description: "Link expired",
 						},
 						"500": {
 							Description: "Internal server error",

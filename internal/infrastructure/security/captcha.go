@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -18,16 +18,40 @@ type TurnstileVerifier struct {
 	secretKey string
 	client    *http.Client
 	isDev     bool
+	appEnv    string
 }
 
-func NewTurnstileVerifier(secretKey string, isDev bool) *TurnstileVerifier {
-	return &TurnstileVerifier{
+func NewTurnstileVerifier(secretKey string, isDev bool, appEnv string) *TurnstileVerifier {
+	verifier := &TurnstileVerifier{
 		secretKey: secretKey,
 		client: &http.Client{
 			Timeout: 5 * time.Second,
 		},
-		isDev: isDev,
+		isDev:  isDev,
+		appEnv: appEnv,
 	}
+
+	if secretKey == "" && isDev {
+		verifier.logBypassWarning()
+	}
+
+	return verifier
+}
+
+func (v *TurnstileVerifier) logBypassWarning() {
+	msg := fmt.Sprintf(
+		"\n"+
+			"╔════════════════════════════════════════════════════════════════╗\n"+
+			"║  CRITICAL SECURITY WARNING: CAPTCHA BYPASS MODE ACTIVE        ║\n"+
+			"╠════════════════════════════════════════════════════════════════╣\n"+
+			"║  Captcha verification is DISABLED in dev mode.                ║\n"+
+			"║  This should NEVER happen in production!                      ║\n"+
+			"║  Current environment: %-40s ║\n"+
+			"║  If this is production, check your APP_ENV configuration.    ║\n"+
+			"╚════════════════════════════════════════════════════════════════╝\n",
+		v.appEnv,
+	)
+	fmt.Fprintf(os.Stderr, "[TurnstileVerifier] %s", msg)
 }
 
 type verifyResponse struct {
@@ -39,11 +63,14 @@ type verifyResponse struct {
 
 func (v *TurnstileVerifier) Verify(ctx context.Context, token string, remoteIP string) error {
 	if v.secretKey == "" {
-		if v.isDev {
-			log.Printf("[TurnstileVerifier] WARN: Skipping captcha verification (missing secret key in dev mode)")
+		actualEnv := os.Getenv("APP_ENV")
+		isExplicitlyDev := v.isDev && (v.appEnv == "development" || actualEnv == "development")
+
+		if isExplicitlyDev {
 			return nil
 		}
-		return fmt.Errorf("captcha verification failed: secret key is missing in non-dev environment")
+
+		return fmt.Errorf("captcha verification failed: secret key is missing in non-dev environment (APP_ENV=%s)", v.appEnv)
 	}
 
 	if token == "" {
