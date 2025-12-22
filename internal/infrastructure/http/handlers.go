@@ -11,6 +11,7 @@ import (
 	"time"
 	"url-shortener/internal/application"
 	"url-shortener/internal/domain"
+	"url-shortener/internal/infrastructure/security"
 )
 
 const (
@@ -23,21 +24,31 @@ type Handlers struct {
 	db                 *sql.DB
 	cache              application.Cache
 	baseURL            string
+	captchaVerifier    *security.TurnstileVerifier
 }
 
-func NewHandlers(createLinkUseCase *application.CreateLinkUseCase, resolveLinkUseCase *application.ResolveLinkUseCase, db *sql.DB, cache application.Cache, baseURL string) *Handlers {
+func NewHandlers(
+	createLinkUseCase *application.CreateLinkUseCase,
+	resolveLinkUseCase *application.ResolveLinkUseCase,
+	db *sql.DB,
+	cache application.Cache,
+	baseURL string,
+	captchaVerifier *security.TurnstileVerifier,
+) *Handlers {
 	return &Handlers{
 		createLinkUseCase:  createLinkUseCase,
 		resolveLinkUseCase: resolveLinkUseCase,
 		db:                 db,
 		cache:              cache,
 		baseURL:            baseURL,
+		captchaVerifier:    captchaVerifier,
 	}
 }
 
 type CreateLinkRequest struct {
-	URL       string  `json:"url"`
-	ExpiresAt *string `json:"expires_at,omitempty"`
+	URL          string  `json:"url"`
+	ExpiresAt    *string `json:"expires_at,omitempty"`
+	CaptchaToken string  `json:"captcha_token"`
 }
 
 type CreateLinkResponse struct {
@@ -68,6 +79,14 @@ func (h *Handlers) CreateLink(w http.ResponseWriter, r *http.Request) {
 	if req.URL == "" {
 		http.Error(w, "url is required", http.StatusBadRequest)
 		return
+	}
+
+	if h.captchaVerifier != nil {
+		if err := h.captchaVerifier.Verify(ctx, req.CaptchaToken, r.RemoteAddr); err != nil {
+			log.Printf("warning: captcha verification failed: %v", err)
+			http.Error(w, "invalid captcha token", http.StatusForbidden)
+			return
+		}
 	}
 
 	parsedURL, err := url.Parse(req.URL)
