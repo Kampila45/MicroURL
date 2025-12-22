@@ -44,7 +44,16 @@ func main() {
 		log.Fatalf("Turnstile secret key is not set or empty (required in %s)", cfg.AppEnv)
 	}
 
-	turnstileVerifier := security.NewTurnstileVerifier(turnstileKey, isDev)
+	if turnstileKey == "" && isDev {
+		log.Printf("WARNING: Captcha verification is DISABLED (dev mode with no secret key)")
+		log.Printf("This should only be used in development environments!")
+		log.Printf("Current APP_ENV: %s", cfg.AppEnv)
+		if cfg.AppEnv != "development" {
+			log.Printf("SECURITY RISK: APP_ENV is not 'development' but captcha is being bypassed!")
+		}
+	}
+
+	turnstileVerifier := security.NewTurnstileVerifier(turnstileKey, isDev, cfg.AppEnv)
 	handlers := httphandler.NewHandlers(createLinkUseCase, resolveLinkUseCase, db, memcacheAdapter, cfg.BaseURL, turnstileVerifier)
 	router := httphandler.NewRouter(handlers, cfg.RateLimitRPS, cfg.RateLimitBurst)
 
@@ -58,16 +67,17 @@ func main() {
 	}
 
 	go func() {
-	log.Printf("server starting on %s", addr)
+		log.Printf("server starting on %s", addr)
 		log.Printf("available endpoints:")
 		log.Printf("  GET  /docs - API documentation (Scalar)")
 		log.Printf("  GET  /openapi.json - OpenAPI specification")
 		log.Printf("  GET  /health - Health check")
 		log.Printf("  POST /api/links - Create short link")
+		log.Printf("  GET  /api/qr/{slug} - Generate QR code for short link")
 		log.Printf("  GET  /{slug} - Resolve short link")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("server failed: %v", err)
-	}
+			log.Fatalf("server failed: %v", err)
+		}
 	}()
 
 	quit := make(chan os.Signal, 1)

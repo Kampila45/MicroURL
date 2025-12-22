@@ -13,6 +13,8 @@ import (
 	"url-shortener/internal/application"
 	"url-shortener/internal/domain"
 	"url-shortener/internal/infrastructure/security"
+
+	"github.com/skip2/go-qrcode"
 )
 
 const (
@@ -59,6 +61,7 @@ type CreateLinkResponse struct {
 	CreatedAt   string  `json:"created_at"`
 	ExpiresAt   *string `json:"expires_at,omitempty"`
 	ShortURL    string  `json:"short_url"`
+	QRCodeURL   string  `json:"qr_code_url"`
 }
 
 func (h *Handlers) CreateLink(w http.ResponseWriter, r *http.Request) {
@@ -125,12 +128,14 @@ func (h *Handlers) CreateLink(w http.ResponseWriter, r *http.Request) {
 
 	link := resp.Link
 	shortURL := fmt.Sprintf("%s/%s", h.baseURL, link.Slug)
+	qrCodeURL := fmt.Sprintf("%s/api/qr/%s", h.baseURL, link.Slug)
 	response := CreateLinkResponse{
 		ID:          link.ID,
 		Slug:        link.Slug,
 		OriginalURL: link.OriginalURL,
 		CreatedAt:   link.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		ShortURL:    shortURL,
+		QRCodeURL:   qrCodeURL,
 	}
 
 	if link.ExpiresAt != nil {
@@ -185,6 +190,59 @@ func (h *Handlers) ResolveLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, resp.OriginalURL, http.StatusFound)
+}
+
+func (h *Handlers) GenerateQRCode(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/qr/")
+	if path == "" || path == r.URL.Path {
+		http.Error(w, "slug is required", http.StatusBadRequest)
+		return
+	}
+
+	slug := path
+	req := application.ResolveLinkRequest{Slug: slug}
+	_, err := h.resolveLinkUseCase.Execute(ctx, req)
+
+	if err != nil {
+		if err == domain.ErrLinkNotFound {
+			log.Printf("info: link not found for slug: %s", slug)
+			http.Error(w, "link not found", http.StatusNotFound)
+			return
+		}
+		if err == domain.ErrLinkExpired {
+			log.Printf("info: link expired for slug: %s", slug)
+			http.Error(w, "link expired", http.StatusGone)
+			return
+		}
+		log.Printf("error: failed to resolve link: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+
+	shortURL := fmt.Sprintf("%s/%s", h.baseURL, slug)
+
+	qrCode, err := qrcode.New(shortURL, qrcode.Medium)
+	if err != nil {
+		log.Printf("error: failed to generate QR code: %v", err)
+		http.Error(w, "failed to generate QR code", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	if err := qrCode.Write(256, w); err != nil {
+		log.Printf("error: failed to write QR code: %v", err)
+		return
+	}
 }
 
 type HealthResponse struct {

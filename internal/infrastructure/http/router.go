@@ -13,6 +13,7 @@ func NewRouter(handlers *Handlers, rateLimitRPS float64, rateLimitBurst int) htt
 	mux.HandleFunc("/openapi.json", handlers.OpenAPISpec)
 	mux.HandleFunc("/health", handlers.Health)
 	mux.HandleFunc("/api/links", handlers.CreateLink)
+	mux.HandleFunc("/api/qr/", handlers.GenerateQRCode)
 	mux.HandleFunc("/", handlers.ResolveLink)
 
 	corsHandler := &corsMiddleware{handler: mux}

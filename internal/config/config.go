@@ -43,6 +43,10 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("BASE_URL environment variable is required")
 	}
 
+	if cfg.AppEnv == "production" && cfg.TurnstileSecretKey == "" {
+		return nil, fmt.Errorf("TURNSTILE_SECRET_KEY environment variable is required when APP_ENV is production")
+	}
+
 	if cfg.Port == "" {
 		cfg.Port = "8080"
 	}
