@@ -175,6 +175,11 @@ func (h *Handlers) OpenAPISpec(w http.ResponseWriter, r *http.Request) {
 											"example":     "2025-12-31T23:59:59Z",
 											"description": "Optional expiration date for the link",
 										},
+										"captcha_token": map[string]interface{}{
+											"type":        "string",
+											"example":     "0.mF_...",
+											"description": "Cloudflare Turnstile captcha verification token",
+										},
 									},
 								},
 							},

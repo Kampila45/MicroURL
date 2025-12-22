@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	"url-shortener/internal/application"
@@ -14,6 +15,7 @@ import (
 	"url-shortener/internal/infrastructure/cache"
 	httphandler "url-shortener/internal/infrastructure/http"
 	"url-shortener/internal/infrastructure/persistence"
+	"url-shortener/internal/infrastructure/security"
 )
 
 func main() {
@@ -36,7 +38,14 @@ func main() {
 	createLinkUseCase := application.NewCreateLinkUseCase(repo, slugGenerator, memcacheAdapter, cfg.CacheTTL)
 	resolveLinkUseCase := application.NewResolveLinkUseCase(repo, memcacheAdapter, cfg.CacheTTL)
 
-	handlers := httphandler.NewHandlers(createLinkUseCase, resolveLinkUseCase, db, memcacheAdapter, cfg.BaseURL)
+	turnstileKey := strings.TrimSpace(cfg.TurnstileSecretKey)
+	isDev := cfg.AppEnv == "development"
+	if turnstileKey == "" && !isDev {
+		log.Fatalf("Turnstile secret key is not set or empty (required in %s)", cfg.AppEnv)
+	}
+
+	turnstileVerifier := security.NewTurnstileVerifier(turnstileKey, isDev)
+	handlers := httphandler.NewHandlers(createLinkUseCase, resolveLinkUseCase, db, memcacheAdapter, cfg.BaseURL, turnstileVerifier)
 	router := httphandler.NewRouter(handlers, cfg.RateLimitRPS, cfg.RateLimitBurst)
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
@@ -49,7 +58,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("server starting on %s", addr)
+	log.Printf("server starting on %s", addr)
 		log.Printf("available endpoints:")
 		log.Printf("  GET  /docs - API documentation (Scalar)")
 		log.Printf("  GET  /openapi.json - OpenAPI specification")
@@ -57,8 +66,8 @@ func main() {
 		log.Printf("  POST /api/links - Create short link")
 		log.Printf("  GET  /{slug} - Resolve short link")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("server failed: %v", err)
-		}
+		log.Fatalf("server failed: %v", err)
+	}
 	}()
 
 	quit := make(chan os.Signal, 1)

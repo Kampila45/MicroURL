@@ -15,16 +15,24 @@ type Config struct {
 	RateLimitRPS     float64
 	RateLimitBurst   int
 	CacheServers     []string
-	CacheTTL         int
+	CacheTTL           int
+	TurnstileSecretKey string
+	AppEnv             string
 }
 
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := &Config{
-		DatabaseURL: os.Getenv("DATABASE_URL"),
-		BaseURL:     os.Getenv("BASE_URL"),
-		Port:        os.Getenv("PORT"),
+		DatabaseURL:        os.Getenv("DATABASE_URL"),
+		BaseURL:            os.Getenv("BASE_URL"),
+		Port:               os.Getenv("PORT"),
+		TurnstileSecretKey: os.Getenv("TURNSTILE_SECRET_KEY"),
+		AppEnv:             os.Getenv("APP_ENV"),
+	}
+
+	if cfg.AppEnv == "" {
+		cfg.AppEnv = "development"
 	}
 
 	if cfg.DatabaseURL == "" {
