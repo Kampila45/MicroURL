@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,14 +17,16 @@ const turnstileVerifyURL = "https://challenges.cloudflare.com/turnstile/v0/sitev
 type TurnstileVerifier struct {
 	secretKey string
 	client    *http.Client
+	isDev     bool
 }
 
-func NewTurnstileVerifier(secretKey string) *TurnstileVerifier {
+func NewTurnstileVerifier(secretKey string, isDev bool) *TurnstileVerifier {
 	return &TurnstileVerifier{
 		secretKey: secretKey,
 		client: &http.Client{
 			Timeout: 5 * time.Second,
 		},
+		isDev: isDev,
 	}
 }
 
@@ -34,9 +38,12 @@ type verifyResponse struct {
 }
 
 func (v *TurnstileVerifier) Verify(ctx context.Context, token string, remoteIP string) error {
-	// If no secret key is configured, skip verification (dev mode or disabled)
 	if v.secretKey == "" {
-		return nil
+		if v.isDev {
+			log.Printf("[TurnstileVerifier] WARN: Skipping captcha verification (missing secret key in dev mode)")
+			return nil
+		}
+		return fmt.Errorf("captcha verification failed: secret key is missing in non-dev environment")
 	}
 
 	if token == "" {
@@ -61,6 +68,11 @@ func (v *TurnstileVerifier) Verify(ctx context.Context, token string, remoteIP s
 		return fmt.Errorf("failed to call turnstile verify api: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {	
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("turnstile verify api returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
 
 	var result verifyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {

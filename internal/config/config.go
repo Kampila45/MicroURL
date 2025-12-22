@@ -17,6 +17,7 @@ type Config struct {
 	CacheServers     []string
 	CacheTTL           int
 	TurnstileSecretKey string
+	AppEnv             string
 }
 
 func Load() (*Config, error) {
@@ -27,6 +28,11 @@ func Load() (*Config, error) {
 		BaseURL:            os.Getenv("BASE_URL"),
 		Port:               os.Getenv("PORT"),
 		TurnstileSecretKey: os.Getenv("TURNSTILE_SECRET_KEY"),
+		AppEnv:             os.Getenv("APP_ENV"),
+	}
+
+	if cfg.AppEnv == "" {
+		cfg.AppEnv = "development"
 	}
 
 	if cfg.DatabaseURL == "" {

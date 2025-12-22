@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 	"url-shortener/internal/application"
 	"url-shortener/internal/domain"
@@ -82,7 +83,8 @@ func (h *Handlers) CreateLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.captchaVerifier != nil {
-		if err := h.captchaVerifier.Verify(ctx, req.CaptchaToken, r.RemoteAddr); err != nil {
+		clientIP := getClientIP(r)
+		if err := h.captchaVerifier.Verify(ctx, req.CaptchaToken, clientIP); err != nil {
 			log.Printf("warning: captcha verification failed: %v", err)
 			http.Error(w, "invalid captcha token", http.StatusForbidden)
 			return
@@ -265,3 +267,17 @@ func (h *Handlers) Health(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func getClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+
+	return r.RemoteAddr
+}

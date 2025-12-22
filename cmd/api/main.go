@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	"url-shortener/internal/application"
@@ -37,7 +38,13 @@ func main() {
 	createLinkUseCase := application.NewCreateLinkUseCase(repo, slugGenerator, memcacheAdapter, cfg.CacheTTL)
 	resolveLinkUseCase := application.NewResolveLinkUseCase(repo, memcacheAdapter, cfg.CacheTTL)
 
-	turnstileVerifier := security.NewTurnstileVerifier(cfg.TurnstileSecretKey)
+	turnstileKey := strings.TrimSpace(cfg.TurnstileSecretKey)
+	isDev := cfg.AppEnv == "development"
+	if turnstileKey == "" && !isDev {
+		log.Fatalf("Turnstile secret key is not set or empty (required in %s)", cfg.AppEnv)
+	}
+
+	turnstileVerifier := security.NewTurnstileVerifier(turnstileKey, isDev)
 	handlers := httphandler.NewHandlers(createLinkUseCase, resolveLinkUseCase, db, memcacheAdapter, cfg.BaseURL, turnstileVerifier)
 	router := httphandler.NewRouter(handlers, cfg.RateLimitRPS, cfg.RateLimitBurst)
 
