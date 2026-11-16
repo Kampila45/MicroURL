@@ -31,3 +31,6 @@ pnpm-debug.log*
 .github/copilot-instructions.md
 .github/instructions/
 
+# Local demo video assets
+microurl_demo.mp4
+

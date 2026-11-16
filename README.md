@@ -6,6 +6,12 @@ A fast, production-ready URL shortener monorepo built with a **Go** backend foll
 
 ---
 
+## Demo
+
+https://github.com/user-attachments/assets/75243624-c2a9-4e87-8e42-2b852fe1d78a
+
+---
+
 ## Features
 
 - **Instant URL Shortening & Custom Aliases** — Generates collision-checked 8-character alphanumeric slugs via `crypto/rand` (retrying on database conflicts) or validates lowercase custom aliases (`[a-z0-9_-]`), with optional RFC3339 link expiration (`expires_at`).
