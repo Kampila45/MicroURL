@@ -36,16 +36,16 @@ type OpenAPIOperation struct {
 }
 
 type OpenAPIParameter struct {
-	Name        string `json:"name"`
-	In          string `json:"in"`
-	Required    bool   `json:"required"`
-	Description string `json:"description"`
+	Name        string                 `json:"name"`
+	In          string                 `json:"in"`
+	Required    bool                   `json:"required"`
+	Description string                 `json:"description"`
 	Schema      map[string]interface{} `json:"schema"`
 }
 
 type OpenAPIRequestBody struct {
-	Required bool                           `json:"required"`
-	Content  map[string]OpenAPIContent      `json:"content"`
+	Required bool                      `json:"required"`
+	Content  map[string]OpenAPIContent `json:"content"`
 }
 
 type OpenAPIContent struct {
@@ -53,8 +53,14 @@ type OpenAPIContent struct {
 }
 
 type OpenAPIResponse struct {
-	Description string                      `json:"description"`
-	Content     map[string]OpenAPIContent   `json:"content,omitempty"`
+	Description string                    `json:"description"`
+	Headers     map[string]OpenAPIHeader  `json:"headers,omitempty"`
+	Content     map[string]OpenAPIContent `json:"content,omitempty"`
+}
+
+type OpenAPIHeader struct {
+	Description string                 `json:"description,omitempty"`
+	Schema      map[string]interface{} `json:"schema,omitempty"`
 }
 
 func (h *Handlers) OpenAPISpec(w http.ResponseWriter, r *http.Request) {
@@ -160,20 +166,28 @@ func (h *Handlers) OpenAPISpec(w http.ResponseWriter, r *http.Request) {
 						Content: map[string]OpenAPIContent{
 							"application/json": {
 								Schema: map[string]interface{}{
-									"type": "object",
+									"type":     "object",
 									"required": []string{"url"},
 									"properties": map[string]interface{}{
 										"url": map[string]interface{}{
 											"type":        "string",
 											"format":      "uri",
+											"maxLength":   2048,
 											"example":     "https://example.com/very/long/url",
-											"description": "The original URL to shorten",
+											"description": "Public HTTP or HTTPS destination URL to shorten (max 2048 chars)",
+										},
+										"custom_slug": map[string]interface{}{
+											"type":        "string",
+											"minLength":   3,
+											"maxLength":   64,
+											"example":     "portfolio-2026",
+											"description": "Optional custom alias (normalized to lowercase [a-z0-9_-])",
 										},
 										"expires_at": map[string]interface{}{
 											"type":        "string",
 											"format":      "date-time",
 											"example":     "2025-12-31T23:59:59Z",
-											"description": "Optional expiration date for the link",
+											"description": "Optional future RFC3339 expiration date for the link",
 										},
 										"captcha_token": map[string]interface{}{
 											"type":        "string",
@@ -238,12 +252,49 @@ func (h *Handlers) OpenAPISpec(w http.ResponseWriter, r *http.Request) {
 						"400": {
 							Description: "Invalid request",
 						},
+						"403": {
+							Description: "CAPTCHA verification failed",
+						},
 						"409": {
 							Description: "Slug collision",
+						},
+						"413": {
+							Description: "Request body too large",
+						},
+						"429": {
+							Description: "Rate limit exceeded",
 						},
 						"500": {
 							Description: "Internal server error",
 						},
+					},
+				},
+			},
+			"/api/links/{slug}/stats": {
+				"get": OpenAPIOperation{
+					Summary:     "Get Link Click Analytics",
+					Description: "Returns aggregate total redirects and daily UTC click buckets (7d or 30d).",
+					Tags:        []string{"Analytics"},
+					Parameters: []OpenAPIParameter{
+						{
+							Name:        "slug",
+							In:          "path",
+							Required:    true,
+							Description: "The short link slug or custom alias",
+							Schema:      map[string]interface{}{"type": "string", "example": "portfolio-2026"},
+						},
+						{
+							Name:        "range",
+							In:          "query",
+							Required:    false,
+							Description: "Date window: 7d (default) or 30d",
+							Schema:      map[string]interface{}{"type": "string", "enum": []string{"7d", "30d"}},
+						},
+					},
+					Responses: map[string]OpenAPIResponse{
+						"200": {Description: "Aggregate click statistics"},
+						"400": {Description: "Invalid range query parameter"},
+						"404": {Description: "Link not found"},
 					},
 				},
 			},
@@ -311,6 +362,16 @@ func (h *Handlers) OpenAPISpec(w http.ResponseWriter, r *http.Request) {
 					Responses: map[string]OpenAPIResponse{
 						"302": {
 							Description: "Redirects to original URL",
+							Headers: map[string]OpenAPIHeader{
+								"X-Cache": {
+									Description: "Whether the redirect was served from the cache (HIT) or read from PostgreSQL (MISS)",
+									Schema: map[string]interface{}{
+										"type":    "string",
+										"enum":    []string{"HIT", "MISS"},
+										"example": "HIT",
+									},
+								},
+							},
 						},
 						"404": {
 							Description: "Link not found",
@@ -330,4 +391,3 @@ func (h *Handlers) OpenAPISpec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
-

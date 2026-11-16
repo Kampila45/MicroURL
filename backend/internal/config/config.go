@@ -2,22 +2,28 @@ package config
 
 import (
 	"fmt"
+	"math"
+	"net/netip"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	DatabaseURL      string
-	BaseURL          string
-	Port             string
-	RateLimitRPS     float64
-	RateLimitBurst   int
-	CacheServers     []string
-	CacheTTL           int
-	TurnstileSecretKey string
-	AppEnv             string
+	DatabaseURL           string
+	BaseURL               string
+	Port                  string
+	RateLimitRPS          float64
+	RateLimitBurst        int
+	TrustedProxies        []netip.Prefix
+	UpstashRedisRESTURL   string
+	UpstashRedisRESTToken string
+	CacheTTL              int
+	TurnstileSecretKey    string
+	AppEnv                string
 }
 
 func Load() (*Config, error) {
@@ -79,12 +85,15 @@ func Load() (*Config, error) {
 		}
 	}
 
-	cacheServers := os.Getenv("CACHE_SERVERS")
-	if cacheServers == "" {
-		cfg.CacheServers = []string{"localhost:11211"}
-	} else {
-		cfg.CacheServers = splitString(cacheServers, ",")
+	upstashURL := strings.TrimSpace(os.Getenv("UPSTASH_REDIS_REST_URL"))
+	if upstashURL != "" {
+		parsedURL, err := url.ParseRequestURI(upstashURL)
+		if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+			return nil, fmt.Errorf("invalid UPSTASH_REDIS_REST_URL: must be a valid http or https URL")
+		}
+		cfg.UpstashRedisRESTURL = strings.TrimRight(upstashURL, "/")
 	}
+	cfg.UpstashRedisRESTToken = strings.TrimSpace(os.Getenv("UPSTASH_REDIS_REST_TOKEN"))
 
 	ttl := os.Getenv("CACHE_TTL")
 	if ttl == "" {
@@ -100,7 +109,39 @@ func Load() (*Config, error) {
 		}
 	}
 
+	trustedProxies := os.Getenv("TRUSTED_PROXIES")
+	if trustedProxies != "" {
+		parsedProxies, err := parseTrustedProxies(trustedProxies)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TRUSTED_PROXIES: %w", err)
+		}
+		cfg.TrustedProxies = parsedProxies
+	}
+
 	return cfg, nil
+}
+
+func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
+	entries := splitString(raw, ",")
+	prefixes := make([]netip.Prefix, 0, len(entries))
+	for _, entry := range entries {
+		if strings.Contains(entry, "/") {
+			prefix, err := netip.ParsePrefix(entry)
+			if err != nil {
+				return nil, fmt.Errorf("invalid CIDR %q: %w", entry, err)
+			}
+			prefixes = append(prefixes, prefix.Masked())
+			continue
+		}
+
+		addr, err := netip.ParseAddr(entry)
+		if err != nil {
+			return nil, fmt.Errorf("invalid IP address %q: %w", entry, err)
+		}
+		addr = addr.Unmap()
+		prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return prefixes, nil
 }
 
 func splitString(s, sep string) []string {
@@ -116,14 +157,17 @@ func splitString(s, sep string) []string {
 }
 
 func parseFloat64(s string) (float64, error) {
-	var f float64
-	_, err := fmt.Sscanf(s, "%f", &f)
-	return f, err
+	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0, err
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("non-finite float value")
+	}
+	return f, nil
 }
 
 func parseInt(s string) (int, error) {
-	var i int
-	_, err := fmt.Sscanf(s, "%d", &i)
-	return i, err
+	return strconv.Atoi(strings.TrimSpace(s))
 }
 

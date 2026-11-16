@@ -6,19 +6,24 @@ import (
 	"time"
 )
 
-func NewRouter(handlers *Handlers, rateLimitRPS float64, rateLimitBurst int) http.Handler {
+func NewRouter(handlers *Handlers, rateLimitRPS float64, rateLimitBurst int, ipResolver *ClientIPResolver) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/docs", handlers.ScalarUI)
 	mux.HandleFunc("/openapi.json", handlers.OpenAPISpec)
 	mux.HandleFunc("/health", handlers.Health)
 	mux.HandleFunc("/api/links", handlers.CreateLink)
+	mux.HandleFunc("/api/links/", handlers.LinksSubresource)
 	mux.HandleFunc("/api/qr/", handlers.GenerateQRCode)
 	mux.HandleFunc("/", handlers.ResolveLink)
 
+	if ipResolver == nil && handlers != nil {
+		ipResolver = handlers.ipResolver
+	}
+
 	corsHandler := &corsMiddleware{handler: mux}
 	loggingHandler := &loggingMiddleware{handler: corsHandler}
-	return newRateLimitMiddleware(rateLimitRPS, rateLimitBurst, loggingHandler)
+	return newRateLimitMiddleware(rateLimitRPS, rateLimitBurst, ipResolver, loggingHandler)
 }
 
 type corsMiddleware struct {

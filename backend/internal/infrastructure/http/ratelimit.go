@@ -2,7 +2,6 @@ package http
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -65,28 +64,10 @@ func (rl *rateLimiter) allow(ip string) bool {
 	return rl.getLimiter(ip).Allow()
 }
 
-func extractIP(r *http.Request) string {
-	ip := r.Header.Get("X-Forwarded-For")
-	if ip != "" {
-		return ip
-	}
-
-	ip = r.Header.Get("X-Real-IP")
-	if ip != "" {
-		return ip
-	}
-
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-
-	return host
-}
-
 type rateLimitMiddleware struct {
-	limiter *rateLimiter
-	handler http.Handler
+	limiter    *rateLimiter
+	ipResolver *ClientIPResolver
+	handler    http.Handler
 }
 
 func (m *rateLimitMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +76,10 @@ func (m *rateLimitMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ip := extractIP(r)
+	ip := m.ipResolver.Resolve(r)
+	if ip == "" {
+		ip = "unknown"
+	}
 	if !m.limiter.allow(ip) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Retry-After", "1")
@@ -107,11 +91,15 @@ func (m *rateLimitMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	m.handler.ServeHTTP(w, r)
 }
 
-func newRateLimitMiddleware(requestsPerSecond float64, burst int, handler http.Handler) http.Handler {
+func newRateLimitMiddleware(requestsPerSecond float64, burst int, ipResolver *ClientIPResolver, handler http.Handler) http.Handler {
+	if ipResolver == nil {
+		ipResolver = NewClientIPResolver(nil)
+	}
 	limiter := newRateLimiter(requestsPerSecond, burst)
 	return &rateLimitMiddleware{
-		limiter: limiter,
-		handler: handler,
+		limiter:    limiter,
+		ipResolver: ipResolver,
+		handler:    handler,
 	}
 }
 

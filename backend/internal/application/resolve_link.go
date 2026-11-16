@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 	"url-shortener/internal/domain"
 )
 
@@ -22,11 +23,13 @@ func NewResolveLinkUseCase(repo LinkRepository, cache Cache, ttl int) *ResolveLi
 }
 
 type ResolveLinkRequest struct {
-	Slug string
+	Slug       string
+	CountClick bool
 }
 
 type ResolveLinkResponse struct {
 	OriginalURL string
+	CacheHit    bool
 }
 
 func (uc *ResolveLinkUseCase) Execute(ctx context.Context, req ResolveLinkRequest) (*ResolveLinkResponse, error) {
@@ -38,7 +41,12 @@ func (uc *ResolveLinkUseCase) Execute(ctx context.Context, req ResolveLinkReques
 			_ = uc.cache.Delete(ctx, cacheKey)
 			return nil, domain.ErrLinkExpired
 		}
-		return &ResolveLinkResponse{OriginalURL: cached.OriginalURL}, nil
+		if req.CountClick {
+			if clickErr := uc.repo.RecordClick(ctx, cached.ID, time.Now().UTC()); clickErr != nil {
+				log.Printf("warning: failed to record redirect click for %s: %v", req.Slug, clickErr)
+			}
+		}
+		return &ResolveLinkResponse{OriginalURL: cached.OriginalURL, CacheHit: true}, nil
 	}
 
 	if err != ErrCacheMiss {
@@ -56,6 +64,11 @@ func (uc *ResolveLinkUseCase) Execute(ctx context.Context, req ResolveLinkReques
 
 	_ = uc.cache.Set(ctx, cacheKey, link, uc.ttl)
 
+	if req.CountClick {
+		if clickErr := uc.repo.RecordClick(ctx, link.ID, time.Now().UTC()); clickErr != nil {
+			log.Printf("warning: failed to record redirect click for %s: %v", req.Slug, clickErr)
+		}
+	}
+
 	return &ResolveLinkResponse{OriginalURL: link.OriginalURL}, nil
 }
-

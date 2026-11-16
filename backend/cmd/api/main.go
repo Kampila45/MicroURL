@@ -30,13 +30,21 @@ func main() {
 	}
 	defer db.Close()
 
+	schemaCtx, schemaCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := persistence.EnsureSchema(schemaCtx, db); err != nil {
+		schemaCancel()
+		log.Fatalf("failed to ensure database schema: %v", err)
+	}
+	schemaCancel()
+
 	repo := persistence.NewPostgresRepository(db)
-	
-	memcacheAdapter := cache.NewMemcacheAdapter(cfg.CacheServers)
-	
+
+	redisCache := cache.NewUpstashRedisAdapter(cfg.UpstashRedisRESTURL, cfg.UpstashRedisRESTToken)
+
 	slugGenerator := application.NewSlugGenerator(repo)
-	createLinkUseCase := application.NewCreateLinkUseCase(repo, slugGenerator, memcacheAdapter, cfg.CacheTTL)
-	resolveLinkUseCase := application.NewResolveLinkUseCase(repo, memcacheAdapter, cfg.CacheTTL)
+	createLinkUseCase := application.NewCreateLinkUseCase(repo, slugGenerator, redisCache, cfg.CacheTTL)
+	resolveLinkUseCase := application.NewResolveLinkUseCase(repo, redisCache, cfg.CacheTTL)
+	getLinkStatsUseCase := application.NewGetLinkStatsUseCase(repo)
 
 	turnstileKey := strings.TrimSpace(cfg.TurnstileSecretKey)
 	isDev := cfg.AppEnv == "development"
@@ -54,15 +62,16 @@ func main() {
 	}
 
 	turnstileVerifier := security.NewTurnstileVerifier(turnstileKey, isDev, cfg.AppEnv)
-	handlers := httphandler.NewHandlers(createLinkUseCase, resolveLinkUseCase, db, memcacheAdapter, cfg.BaseURL, turnstileVerifier)
-	router := httphandler.NewRouter(handlers, cfg.RateLimitRPS, cfg.RateLimitBurst)
+	ipResolver := httphandler.NewClientIPResolver(cfg.TrustedProxies)
+	handlers := httphandler.NewHandlers(createLinkUseCase, resolveLinkUseCase, getLinkStatsUseCase, db, redisCache, cfg.BaseURL, turnstileVerifier, ipResolver)
+	router := httphandler.NewRouter(handlers, cfg.RateLimitRPS, cfg.RateLimitBurst, ipResolver)
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		WriteTimeout:  15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -73,6 +82,7 @@ func main() {
 		log.Printf("  GET  /openapi.json - OpenAPI specification")
 		log.Printf("  GET  /health - Health check")
 		log.Printf("  POST /api/links - Create short link")
+		log.Printf("  GET  /api/links/{slug}/stats - Get aggregate click analytics")
 		log.Printf("  GET  /api/qr/{slug} - Generate QR code for short link")
 		log.Printf("  GET  /{slug} - Resolve short link")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

@@ -3,11 +3,15 @@ package application
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 	"url-shortener/internal/domain"
 )
+
+const maxSlugCreateRetries = 5
 
 type CreateLinkUseCase struct {
 	repo          LinkRepository
@@ -27,6 +31,7 @@ func NewCreateLinkUseCase(repo LinkRepository, slugGenerator *SlugGenerator, cac
 
 type CreateLinkRequest struct {
 	OriginalURL string
+	CustomSlug  string
 	ExpiresAt   *time.Time
 }
 
@@ -35,9 +40,14 @@ type CreateLinkResponse struct {
 }
 
 func (uc *CreateLinkUseCase) Execute(ctx context.Context, req CreateLinkRequest) (*CreateLinkResponse, error) {
-	slug, err := uc.slugGenerator.Generate(ctx)
+	validatedURL, err := domain.ValidateDestinationURL(req.OriginalURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate slug: %w", err)
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	if req.ExpiresAt != nil && !req.ExpiresAt.After(now) {
+		return nil, domain.ErrExpiredTimestamp
 	}
 
 	id, err := generateID()
@@ -45,22 +55,65 @@ func (uc *CreateLinkUseCase) Execute(ctx context.Context, req CreateLinkRequest)
 		return nil, fmt.Errorf("failed to generate ID: %w", err)
 	}
 
-	link := &domain.Link{
-		ID:          id,
-		Slug:        slug,
-		OriginalURL: req.OriginalURL,
-		CreatedAt:   time.Now(),
-		ExpiresAt:   req.ExpiresAt,
+	customSlug := strings.TrimSpace(req.CustomSlug)
+	if customSlug != "" {
+		normalizedAlias, err := domain.ValidateCustomAlias(customSlug)
+		if err != nil {
+			return nil, err
+		}
+
+		link := &domain.Link{
+			ID:          id,
+			Slug:        normalizedAlias,
+			OriginalURL: validatedURL,
+			CreatedAt:   now,
+			ExpiresAt:   req.ExpiresAt,
+		}
+		if err := uc.repo.Create(ctx, link); err != nil {
+			if errors.Is(err, domain.ErrInvalidSlug) {
+				return nil, fmt.Errorf("alias %q already exists: %w", normalizedAlias, domain.ErrAliasConflict)
+			}
+			return nil, fmt.Errorf("failed to create link in repository: %w", err)
+		}
+
+		cacheKey := fmt.Sprintf("link:slug:%s", link.Slug)
+		_ = uc.cache.Set(ctx, cacheKey, link, uc.ttl)
+		return &CreateLinkResponse{Link: link}, nil
 	}
 
-	if err := uc.repo.Create(ctx, link); err != nil {
+	var createdLink *domain.Link
+	for attempt := 0; attempt < maxSlugCreateRetries; attempt++ {
+		slug, err := uc.slugGenerator.Generate(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate slug: %w", err)
+		}
+
+		candidate := &domain.Link{
+			ID:          id,
+			Slug:        slug,
+			OriginalURL: validatedURL,
+			CreatedAt:   now,
+			ExpiresAt:   req.ExpiresAt,
+		}
+		err = uc.repo.Create(ctx, candidate)
+		if err == nil {
+			createdLink = candidate
+			break
+		}
+		if errors.Is(err, domain.ErrInvalidSlug) {
+			continue
+		}
 		return nil, fmt.Errorf("failed to create link in repository: %w", err)
 	}
 
-	cacheKey := fmt.Sprintf("link:slug:%s", link.Slug)
-	_ = uc.cache.Set(ctx, cacheKey, link, uc.ttl)
+	if createdLink == nil {
+		return nil, fmt.Errorf("failed to persist unique generated slug after %d attempts: %w", maxSlugCreateRetries, domain.ErrInvalidSlug)
+	}
 
-	return &CreateLinkResponse{Link: link}, nil
+	cacheKey := fmt.Sprintf("link:slug:%s", createdLink.Slug)
+	_ = uc.cache.Set(ctx, cacheKey, createdLink, uc.ttl)
+
+	return &CreateLinkResponse{Link: createdLink}, nil
 }
 
 func generateID() (string, error) {
