@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: microurl-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: microurl
+      POSTGRES_PASSWORD: microurl_dev_password
+      POSTGRES_DB: microurl
+    ports:
+      - "5432:5432"
+    volumes:
+      - microurl_pgdata:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/01-init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U microurl -d microurl"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: microurl-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  upstash-rest:
+    image: hiett/serverless-redis-http:latest
+    container_name: microurl-upstash-rest
+    restart: unless-stopped
+    depends_on:
+      - redis
+    ports:
+      - "8079:80"
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: microurl_dev_redis_token
+      SRH_CONNECTION_STRING: redis://redis:6379
+
+volumes:
+  microurl_pgdata:
