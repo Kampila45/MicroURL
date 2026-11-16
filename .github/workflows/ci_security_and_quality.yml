@@ -1,0 +1,102 @@
+name: MicroURL CI — Security, Lint & Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend-quality-and-tests:
+    name: Backend Vet, Test & Build (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Verify Go modules
+        run: go mod verify
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run Go tests
+        run: go test -race ./...
+
+      - name: Build API binary
+        run: go build -o /tmp/microurl-api ./cmd/api
+
+  frontend-quality-and-build:
+    name: Frontend Supply-Chain Security, Lint & Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24 (npm 11.10.0+ for min-release-age=30)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Verify npm version supports min-release-age
+        run: npm --version
+
+      - name: Verify .npmrc enforces min-release-age=30 and save-exact=true
+        run: |
+          grep -q "^min-release-age=30$" .npmrc
+          grep -q "^save-exact=true$" .npmrc
+
+      - name: Verify exact version pinning in package.json (no ^ or ~ ranges)
+        run: |
+          node -e '
+            const pkg = require("./package.json");
+            const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+            const unpinned = Object.entries(allDeps).filter(([, v]) => /^[~^><=*]/.test(v));
+            if (unpinned.length > 0) {
+              console.error("Unpinned dependency ranges detected:", unpinned);
+              process.exit(1);
+            }
+          '
+
+      - name: Install dependencies cleanly with lifecycle scripts disabled
+        run: npm ci --ignore-scripts
+
+      - name: Verify registry signatures and provenance attestations
+        run: npm audit signatures
+
+      - name: Audit dependencies for high/critical vulnerabilities
+        run: npm audit --audit-level=high
+
+      - name: Run TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run Vitest suite
+        run: npm test
+
+      - name: Build production frontend
+        env:
+          VITE_API_BASE_URL: http://localhost:8080
+        run: npm run build
